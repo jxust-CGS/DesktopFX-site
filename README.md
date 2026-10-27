@@ -5,8 +5,10 @@
 **DesktopFX** 是一个纯 Python 编写的 Windows 桌面特效程序。它用 `ctypes` 直接调用 Win32 的
 `UpdateLayeredWindow`，在整个虚拟屏幕（含多显示器）上盖一层半透明覆盖层，实现 13 种特效。
 
-本仓库是它的**产品介绍页**（GitHub Pages 托管），不是源码仓库。
-源码在 → **[jxust-CGS/DesktopFX](https://github.com/jxust-CGS/DesktopFX)**
+- **产品介绍页** → https://jxust-cgs.github.io/DesktopFX-site/
+- **源码仓库** → https://github.com/jxust-CGS/DesktopFX
+
+本仓库只存放介绍页本身，源码在上面的主仓库里。
 
 ---
 
