@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DesktopFX 桌面特效 · 给 Windows 桌面加一层会呼吸的天气</title>
+<meta name="description" content="纯 Python 的 Windows 桌面特效程序。13 种全屏氛围 / 鼠标互动特效，鼠标事件完全穿透，参数实时可调，支持自定义预设。">
+<style>
+/* ============================================================
+   设计方向：工业实用 + 暗色仪器盘
+   核心记忆点：整个页面就是一个 Windows 工具窗口 ——
+   标题栏有真实帧率读数，内容区是被"覆盖"在桌面上的特效。
+   配色沿用项目自身的主题：底 #0B0E14，卡片 #121824，强调色 #4FD1E0
+   ============================================================ */
+
+:root{
+  --bg:#0B0E14;
+  --bg-2:#0E131C;
+  --card:#121824;
+  --card-2:#1A2230;
+  --line:#232B38;
+  --line-2:#2E3846;
+  --text:#E8EDF3;
+  --sub:#6F7D90;
+  --accent:#4FD1E0;
+  --accent-dim:#2A8A99;
+  --accent-glow:rgba(79,209,224,.16);
+  --warn:#E0A040;
+  --pink:#FF9DB6;
+  --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", system-ui, sans-serif;
+  --mono: "Cascadia Code", "JetBrains Mono", Consolas, "SF Mono", monospace;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font);
+  line-height:1.7;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+
+/* 噪点纹理：给纯色底面一点质感，不喧宾夺主 */
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:1;
+  opacity:.035;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---------- 主窗口外壳 ---------- */
+.shell{
+  position:relative;z-index:2;
+  max-width:1180px;margin:34px auto 0;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:var(--bg-2);
+  overflow:hidden;
+  box-shadow:0 40px 90px -30px rgba(0,0,0,.85), 0 0 0 1px rgba(79,209,224,.05);
+}
+
+/* 标题栏：模仿原生窗口，顶栏有实时读数 */
+.titlebar{
+  display:flex;align-items:center;gap:14px;
+  padding:0 16px;height:44px;
+  background:linear-gradient(180deg,#161C28,#10151E);
+  border-bottom:1px solid var(--line);
+  user-select:none;
+}
+.tb-dot{width:11px;height:11px;border-radius:50%;flex:none}
+.tb-dot.r{background:#FF5F57}.tb-dot.y{background:#FEBC2E}.tb-dot.g{background:#28C840}
+.tb-title{
+  font-size:13px;font-weight:500;letter-spacing:.02em;color:#A9B7C8;
+  display:flex;align-items:center;gap:9px;margin-left:4px;
+}
+.tb-title b{color:var(--text);font-weight:600}
+.tb-title .v{color:var(--sub);font-family:var(--mono);font-size:12px}
+.tb-readout{
+  margin-left:auto;display:flex;gap:16px;
+  font-family:var(--mono);font-size:11.5px;color:var(--sub);
+  letter-spacing:.04em;
+}
+.tb-readout span b{color:var(--accent);font-weight:500}
+
+/* ---------- 英雄区 ---------- */
+.hero{position:relative;padding:64px 56px 52px;overflow:hidden}
+.hero::after{
+  /* 一层极淡的网格，暗示"像素/粒子" */
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(rgba(79,209,224,.035) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(79,209,224,.035) 1px,transparent 1px);
+  background-size:46px 46px;
+  mask-image:radial-gradient(ellipse 85% 60% at 50% 0%,#000 30%,transparent 78%);
+}
+.hero-inner{position:relative;z-index:2}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:9px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--accent);
+  padding:6px 13px;border:1px solid rgba(79,209,224,.28);
+  border-radius:100px;background:var(--accent-glow);
+}
+h1{
+  font-size:clamp(38px,6.4vw,68px);line-height:1.06;
+  font-weight:700;letter-spacing:-.025em;
+  margin:24px 0 0;max-width:15ch;
+}
+h1 em{
+  font-style:normal;
+  background:linear-gradient(100deg,var(--accent),#8FDFFF 55%,var(--pink));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.lede{
+  margin-top:22px;max-width:58ch;
+  font-size:16.5px;color:#93A3B7;line-height:1.85;
+}
+.lede b{color:var(--text);font-weight:600}
+.hero-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}
+.btn{
+  display:inline-flex;align-items:center;gap:9px;
+  padding:12px 22px;border-radius:9px;
+  font-size:14px;font-weight:500;text-decoration:none;
+  border:1px solid var(--line-2);background:var(--card-2);color:var(--text);
+  transition:.18s cubic-bezier(.2,.8,.3,1);
+}
+.btn:hover{border-color:var(--accent-dim);background:#1F2937;transform:translateY(-1px)}
+.btn.primary{background:var(--accent);color:#05262B;border-color:var(--accent);font-weight:600}
+.btn.primary:hover{background:#6FDDEA;box-shadow:0 8px 26px -8px rgba(79,209,224,.6)}
+.btn code{font-family:var(--mono);font-size:12.5px;opacity:.75}
+
+/* ---------- 视频区 ---------- */
+.video-sec{padding:0 56px 56px;position:relative;z-index:2}
+.video-frame{
+  position:relative;border:1px solid var(--line-2);border-radius:12px;
+  overflow:hidden;background:#05070B;
+  box-shadow:0 26px 60px -24px rgba(0,0,0,.9);
+}
+.video-frame video{display:block;width:100%;height:auto}
+.vf-bar{
+  display:flex;align-items:center;gap:14px;
+  padding:9px 14px;background:#0D121B;border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:11.5px;color:var(--sub);
+}
+.vf-bar .chip{
+  padding:2px 9px;border-radius:5px;
+  background:rgba(79,209,224,.12);color:var(--accent);
+  border:1px solid rgba(79,209,224,.22);
+}
+.vf-note{
+  margin-top:14px;font-size:13.5px;color:var(--sub);
+  display:flex;gap:10px;align-items:flex-start;
+}
+.vf-note .k{color:var(--accent);font-family:var(--mono);flex:none}
+
+/* ---------- 通用区块 ---------- */
+.sec{padding:64px 56px;border-top:1px solid var(--line)}
+.sec-head{margin-bottom:34px;max-width:70ch}
+.sec-num{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.16em;
+  color:var(--accent);display:block;margin-bottom:10px;
+}
+h2{font-size:clamp(24px,3.4vw,34px);font-weight:650;letter-spacing:-.02em;line-height:1.24}
+.sec-head p{margin-top:12px;color:#8A99AC;font-size:15.5px}
+
+/* ---------- 特效网格 ---------- */
+.fx-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(272px,1fr));gap:16px}
+.fx-card{
+  border:1px solid var(--line);border-radius:11px;overflow:hidden;
+  background:var(--card);transition:.2s cubic-bezier(.2,.8,.3,1);
+}
+.fx-card:hover{border-color:var(--accent-dim);transform:translateY(-3px);box-shadow:0 16px 34px -18px rgba(0,0,0,.8)}
+/* 卡片配图统一 16:9 —— 与视频和所有实拍图同比例，
+   否则 object-fit:cover 会把上下裁掉一块，看着像"图被切了" */
+.fx-thumb{position:relative;aspect-ratio:16/9;background:#070A10;overflow:hidden}
+.fx-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.fx-cat{
+  position:absolute;top:10px;left:10px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;
+  padding:3px 8px;border-radius:5px;
+  background:rgba(6,9,14,.78);color:var(--accent);
+  border:1px solid rgba(79,209,224,.24);backdrop-filter:blur(6px);
+}
+.fx-body{padding:15px 17px 17px}
+.fx-body h3{font-size:16px;font-weight:600;margin-bottom:6px}
+.fx-body p{font-size:13.5px;color:#8494A8;line-height:1.68}
+.fx-tags{margin-top:11px;display:flex;flex-wrap:wrap;gap:6px}
+.fx-tags span{
+  font-family:var(--mono);font-size:10.5px;color:var(--sub);
+  padding:2px 7px;border-radius:4px;background:var(--card-2);
+  border:1px solid var(--line);
+}
+
+/* ---------- 面板截图 ---------- */
+.panel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.panel-item{
+  border:1px solid var(--line);border-radius:10px;overflow:hidden;
+  background:var(--card);
+}
+.panel-item img{width:100%;display:block}
+.panel-cap{
+  padding:9px 13px;font-size:12.5px;color:var(--sub);
+  border-top:1px solid var(--line);font-family:var(--mono);
+}
+
+/* ---------- 规格表 ---------- */
+.spec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.spec{background:var(--card);padding:22px 20px}
+.spec .v{font-family:var(--mono);font-size:30px;font-weight:600;color:var(--accent);letter-spacing:-.02em;line-height:1}
+.spec .v small{font-size:14px;color:var(--sub);font-weight:400;margin-left:3px}
+.spec .l{margin-top:9px;font-size:13px;color:#8494A8}
+.spec .l b{display:block;color:var(--text);font-size:14px;font-weight:550;margin-bottom:2px}
+
+/* ---------- 技术列表 ---------- */
+.tech-list{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.tech-row{background:var(--card);padding:19px 22px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:28px;align-items:start}
+.tech-row h4{font-size:14.5px;font-weight:600;margin-bottom:6px;color:var(--text)}
+.tech-row h4::before{content:'▸ ';color:var(--accent);font-family:var(--mono)}
+.tech-row p{font-size:13.5px;color:#8494A8;line-height:1.72}
+.tech-row p code{font-family:var(--mono);font-size:12px;background:var(--card-2);padding:1px 5px;border-radius:4px;color:var(--accent);border:1px solid var(--line)}
+
+/* ---------- 步骤 ---------- */
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px}
+.step{position:relative;padding-left:0}
+.step .n{
+  font-family:var(--mono);font-size:12px;color:var(--accent);
+  width:30px;height:30px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--accent-glow);border:1px solid rgba(79,209,224,.28);
+  margin-bottom:13px;
+}
+.step h4{font-size:15px;font-weight:600;margin-bottom:6px}
+.step p{font-size:13.5px;color:#8494A8}
+
+/* ---------- CTA / 页脚 ---------- */
+.cta{
+  padding:52px 56px;
+  background:linear-gradient(135deg,rgba(79,209,224,.09),rgba(255,157,182,.05));
+  border-top:1px solid var(--line);
+  display:flex;flex-wrap:wrap;gap:26px;align-items:center;justify-content:space-between;
+}
+.cta h2{font-size:25px}
+.cta p{margin-top:8px;color:#8A99AC;font-size:14.5px}
+.cta .hashtag{font-family:var(--mono);font-size:13px;color:var(--accent)}
+footer{
+  border-top:1px solid var(--line);padding:26px 56px;
+  display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;
+  font-size:12.5px;color:var(--sub);
+}
+footer code{font-family:var(--mono);color:#8494A8}
+
+/* ---------- 响应式 ---------- */
+@media (max-width:860px){
+  .shell{margin:0;border-radius:0;border-left:0;border-right:0}
+  .hero{padding:44px 24px 36px}
+  .video-sec{padding:0 24px 40px}
+  .sec{padding:48px 24px}
+  .cta{padding:38px 24px}
+  footer{padding:22px 24px}
+  .tech-row{grid-template-columns:1fr;gap:10px}
+  .tb-readout{display:none}
+  .panel-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- 标题栏：真实工具窗口的样子 -->
+  <div class="titlebar">
+    <span class="tb-dot r"></span><span class="tb-dot y"></span><span class="tb-dot g"></span>
+    <span class="tb-title"><b>DesktopFX</b> <span class="v">v1.3.0</span></span>
+    <span class="tb-readout">
+      <span><b id="fps">60.0</b> 帧/秒</span>
+      <span><b>9.0</b> 毫秒/帧</span>
+      <span>特效 <b>13</b> · 预设 <b>10</b></span>
+    </span>
+  </div>
+
+  <!-- 英雄区 -->
+  <section class="hero">
+    <div class="hero-inner">
+      <span class="eyebrow">1024 程序员节 · 应用创作大赛</span>
+      <h1>给 Windows 桌面<br>加一层<em>会呼吸的天气</em></h1>
+      <p class="lede">
+        纯 Python 写的桌面特效程序。<b>下雨、下雪、落樱、流星雨</b>覆盖整块屏幕（含多显示器），
+        <b>聚光灯、颜料盘、真实水波、宠物跟随</b>跟着鼠标走，
+        <b>点击表情、点击文字、点击音效</b>在光标处炸开。
+        覆盖层<b>鼠标事件完全穿透</b>，不拦截任何一次点击。
+      </p>
+      <div class="hero-actions">
+        <a class="btn primary" href="https://github.com/jxust-CGS/DesktopFX" target="_blank" rel="noopener">↓ 下载 / 源码</a>
+        <a class="btn" href="https://github.com/jxust-CGS/DesktopFX/releases" target="_blank" rel="noopener">发布说明 <code>Releases</code></a>
+        <a class="btn" href="#tech">看它怎么做的</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- 视频 -->
+  <section class="video-sec">
+    <div class="video-frame">
+      <div class="vf-bar">
+        <span class="chip">完整演示</span>
+        <span>13 种特效逐个实拍 · 鼠标轨迹与点击都是真的在动</span>
+      </div>
+      <video controls playsinline preload="metadata" poster="assets/poster.jpg">
+        <source src="assets/showcase.webm" type="video/webm">
+        <source src="assets/showcase.mp4" type="video/mp4">
+        你的浏览器不支持视频播放，请
+        <a href="assets/showcase.mp4" style="color:var(--accent)">直接下载</a>。
+      </video>
+    </div>
+    <p class="vf-note">
+      <span class="k">▸</span>
+      <span>这段视频里的每一帧，都是用 <code style="font-family:var(--mono);color:var(--accent)">DesktopFX 自己的渲染引擎</code>离线跑出来的
+      —— 与你桌面上跑的是同一份代码、同一份参数，不是另做的演示动画。
+      画面里的<b style="color:#93A3B7">光标会真的移动、真的按下</b>：
+      聚光灯跟着光标亮、颜料被它搅动、小猫沿它划过的路线跟上来、爱心在它点下的位置炸开。</span>
+    </p>
+  </section>
+
+  <!-- 13 种特效 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-num">01 / 效果一览</span>
+      <h2>13 种特效，按驱动方式分五类</h2>
+      <p>不是「全都能同时开」—— 同类的默认互斥，新开一个会自动关掉另一个。
+        需要雨雪同屏时，在设置里打开「允许多开」。
+        <b style="color:#93A3B7">上半段是氛围特效（自己布满屏幕），下半段要靠鼠标带出来</b>。</p>
+    </div>
+    <div class="fx-grid">
+
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-rain.jpg" alt="下雨特效实拍：三档景深的雨丝落在桌面窗口之上"><span class="fx-cat">全屏特效</span></div>
+        <div class="fx-body">
+          <h3>下雨</h3>
+          <p>三层景深，雨丝随速度拉长，落地溅起水花。风偏、雨量、浓度都能实时调。</p>
+          <div class="fx-tags"><span>3 层景深</span><span>风偏</span><span>溅水花</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-snow.jpg" alt="下雪特效实拍：三档景深的雪花落在桌面窗口上"><span class="fx-cat">全屏特效</span></div>
+        <div class="fx-body">
+          <h3>下雪</h3>
+          <p>按深度分三档近大远小，远雪压住近雪（画家算法）。逐粒子亮度脉动，近雪带辉光，另有独立风速与双正弦阵风。</p>
+          <div class="fx-tags"><span>3 档景深</span><span>闪烁/辉光</span><span>阵风</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-petal.jpg" alt="落樱特效实拍：粉色花瓣在浅色桌面上翻面"><span class="fx-cat">全屏特效</span></div>
+        <div class="fx-body">
+          <h3>落樱</h3>
+          <p>花瓣按「主体 → 边缘泛白」双色渐变，带自旋与翻面 —— 翻到侧立时面积收扁、颜色偏白。</p>
+          <div class="fx-tags"><span>双色渐变</span><span>自旋翻面</span><span>逐片相位</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-meteor.jpg" alt="流星雨特效实拍：头部辉光与渐隐拖尾划过星空"><span class="fx-cat">全屏特效</span></div>
+        <div class="fx-body">
+          <h3>流星雨</h3>
+          <p>斜向高速掠过的彗星。轨迹按间距采样成一串圆盘盖章，尾部不会串成珠子，可叠加一层星空。</p>
+          <div class="fx-tags"><span>头部辉光</span><span>拖尾渐隐</span><span>静态星空</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-spotlight.jpg" alt="聚光灯实拍：鼠标变成一盏灯，光圈外整屏压暗"><span class="fx-cat">鼠标拖动特效</span></div>
+        <div class="fx-body">
+          <h3>聚光灯</h3>
+          <p>鼠标变成一盏灯：光圈里是亮的，光圈外整屏压暗，把注意力锁在光标周围。</p>
+          <div class="fx-tags"><span>柔边光洞</span><span>压暗可调</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-ripple.jpg" alt="鼠标涟漪实拍：光标划过荡开一圈圈同心圆环"><span class="fx-cat">鼠标拖动特效</span></div>
+        <div class="fx-body">
+          <h3>鼠标涟漪</h3>
+          <p>光标划过荡开一圈圈涟漪，多层同心圆环 + 真实 alpha 衰减，越远越淡。</p>
+          <div class="fx-tags"><span>多层圆环</span><span>触发灵敏度</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-wave.jpg" alt="真实水波实拍：桌面被当成水面，明暗条纹随波起伏"><span class="fx-cat">鼠标拖动特效</span></div>
+        <div class="fx-body">
+          <h3>真实水波</h3>
+          <p>把桌面当成一片水。波会向外传播、相互干涉、撞到边缘反射 —— 这是真的波动方程。</p>
+          <div class="fx-tags"><span>二维波动方程</span><span>迎光/背光</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-paint.jpg" alt="颜料盘实拍：鼠标搅出的彩色流体丝带"><span class="fx-cat">鼠标特效</span></div>
+        <div class="fx-body">
+          <h3>颜料盘</h3>
+          <p>鼠标搅动的流体颜料。笔触被拖出、卷成涡、拉成丝，停手后继续涡旋再慢慢消隐。</p>
+          <div class="fx-tags"><span>半拉格朗日平流</span><span>curl 基流</span><span>色相渐变</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-pet.jpg" alt="宠物跟随实拍：小猫沿鼠标划过的路线排成一列跟上来"><span class="fx-cat">鼠标特效</span></div>
+        <div class="fx-body">
+          <h3>宠物跟随</h3>
+          <p>小猫小狗沿你划过的路线一路跟上来，最多 10 只排成一列。形象由代码绘制，不依赖任何图片。</p>
+          <div class="fx-tags"><span>弹簧跟随</span><span>1~10 只</span><span>走/停/眨眼帧</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-emoji.jpg" alt="点击表情实拍：爱心图案在鼠标点击处炸开"><span class="fx-cat">点击特效</span></div>
+        <div class="fx-body">
+          <h3>点击表情</h3>
+          <p>点一下炸开一簇图案。8 种形状全部由代码画出，支持自定义表情包，GIF 会动起来。</p>
+          <div class="fx-tags"><span>8 种图案</span><span>自定义 GIF</span><span>重力/自旋</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-text.jpg" alt="点击文字实拍：好耶两个字带彩带装饰向上飘走"><span class="fx-cat">鼠标点击特效</span></div>
+        <div class="fx-body">
+          <h3>点击文字</h3>
+          <p>点一下弹出文字并向上飘走。多行内容轮换播放，每次随机歪一点，可挂彩带或星光。</p>
+          <div class="fx-tags"><span>多行轮换</span><span>随机倾斜</span><span>彩带/星光</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/s-wwave.jpg" alt="窗口水波实拍：移动的窗口像活塞一样推开水面"><span class="fx-cat">其他特效</span></div>
+        <div class="fx-body">
+          <h3>窗口水波</h3>
+          <p>把桌面上的窗口当成水面上的活塞：移动时前缘推水、后缘留空腔，静止的窗口零注入。</p>
+          <div class="fx-tags"><span>船首浪</span><span>船尾迹</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/panel-other.jpg" alt="点击音效在控制面板「其他设置」页中的位置" style="object-fit:contain;background:#0A0D14"><span class="fx-cat">鼠标点击音效</span></div>
+        <div class="fx-body">
+          <h3>点击音效</h3>
+          <p>点一下鼠标就响一声，<b style='color:#93A3B7'>不画任何像素</b>。内置音效 / 单个音效 / 音效文件夹随机三档来源，勾上「键盘点击也触发」后打字也会响。</p>
+          <div class="fx-tags"><span>不画像素</span><span>三种来源</span><span>键盘触发</span></div>
+        </div>
+      </article>
+      <article class="fx-card">
+        <div class="fx-thumb"><img src="assets/panel-rain.jpg" alt="控制面板：分类侧栏与参数滑块" style="object-fit:contain;background:#0A0D14"><span class="fx-cat">控制面板</span></div>
+        <div class="fx-body">
+          <h3>参数实时可调</h3>
+          <p>侧栏按五类分组，每个参数拖一下立刻生效。调好存成预设，一键切回。</p>
+          <div class="fx-tags"><span>即时生效</span><span>自定义预设</span><span>配置持久化</span></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- 规格 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-num">02 / 规格</span>
+      <h2>一个不装 GUI 框架的桌面特效器</h2>
+    </div>
+    <div class="spec-grid">
+      <div class="spec"><div class="v">13<small>种</small></div><div class="l"><b>特效</b>全屏 / 鼠标 / 点击 / 音效 / 其他，五类</div></div>
+      <div class="spec"><div class="v">14<small>k 行</small></div><div class="l"><b>Python 源码</b>含 40 个验证脚本</div></div>
+      <div class="spec"><div class="v">2<small>个</small></div><div class="l"><b>第三方依赖</b>numpy 渲染 + Pillow 抗锯齿</div></div>
+      <div class="spec"><div class="v">0<small>ms</small></div><div class="l"><b>鼠标拦截</b>WS_EX_TRANSPARENT 完全穿透</div></div>
+      <div class="spec"><div class="v">10<small>个</small></div><div class="l"><b>内置预设</b>可另存自定义并随时删除</div></div>
+      <div class="spec"><div class="v">3<small>档</small></div><div class="l"><b>雪花景深</b>远中近，近雪压住远雪</div></div>
+    </div>
+  </section>
+
+  <!-- 面板截图 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-num">03 / 控制面板</span>
+      <h2>侧栏分组，调参即所见</h2>
+      <p>面板是自绘控件（Canvas + 抗锯齿），所有参数拖动即时生效 —— 不需要重启，也不需要切回桌面去看效果。</p>
+    </div>
+    <div class="panel-grid">
+      <div class="panel-item">
+        <img src="assets/panel-rain.jpg" alt="下雨页的控制面板，含雨量/速度/长度/风力/浓度滑块与雨丝配色">
+        <div class="panel-cap">下雨 · 6 项参数 + 配色</div>
+      </div>
+      <div class="panel-item">
+        <img src="assets/panel-paint.jpg" alt="颜料盘页的控制面板，含笔刷/落色/搅动/扩散/晕染/消隐等滑块">
+        <div class="panel-cap">颜料盘 · 10 项参数</div>
+      </div>
+      <div class="panel-item">
+        <img src="assets/panel-other.jpg" alt="其他设置页：两个图层各自的层级与多开开关">
+        <div class="panel-cap">其他设置 · 图层与多开</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 技术 -->
+  <section class="sec" id="tech">
+    <div class="sec-head">
+      <span class="sec-num">04 / 它是怎么做的</span>
+      <h2>几个不太一样的实现</h2>
+      <p>下面每一条都是真的踩过坑之后才写成现在这样的。</p>
+    </div>
+    <div class="tech-list">
+      <div class="tech-row">
+        <h4>透明覆盖层怎么盖住整个虚拟屏</h4>
+        <p>用 <code>WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST</code> 建一个覆盖
+          <code>SM_CXVIRTUALSCREEN × SM_CYVIRTUALSCREEN</code> 的窗，鼠标事件由
+          <code>WS_EX_TRANSPARENT</code> 完全穿透。像素走 <code>UpdateLayeredWindow</code> +
+          预乘 alpha，不需要任何 GUI 框架 —— 所以不装 PyQt / wxPython / WPF，机器上只多 numpy 和 Pillow。</p>
+      </div>
+      <div class="tech-row">
+        <h4>真实水波是真波动方程</h4>
+        <p>高度场 + 速度场双缓冲，<code>g += (avg4(h) − h)·K; g *= damp; h += g</code>。
+          波会向外传播、相互干涉、撞到屏幕边缘反射 —— 一次点击的涟漪要好几秒才传遍屏幕。
+          透明层拿不到桌面像素做折射，所以把波面坡度当法线，按固定光向做迎光提亮 / 背光压暗，对任何底色都成立。</p>
+      </div>
+      <div class="tech-row">
+        <h4>窗口水波：把窗口当成水面上的活塞</h4>
+        <p>窗口自己不画一个像素，只往与「真实水波」共用的那片水面注入位移。移动时前缘推水、后缘留空腔；
+          最小化是水从四周合拢填掉它。静止的窗口<strong>绝对零注入</strong> —— 泡着不动的石头不搅水。</p>
+      </div>
+      <div class="tech-row">
+        <h4>流星轨迹不是栅格化线段</h4>
+        <p>而是按间距采样成一串同半径圆盘，一次性向量化盖章。圆盘核内留一段平坦区，
+          否则相邻圆盘的中点亮度只有一半，彗尾会串成珠子。燃尽距离由屏幕几何决定，
+          所以超高屏上不会出现「只有上半屏有流星」。</p>
+      </div>
+      <div class="tech-row">
+        <h4>置顶保活：每帧自检，但很便宜</h4>
+        <p>每帧检查是否被第三方置顶窗（全屏视频 / 画中画 / 远控全屏）盖住。
+          判据要求「可见 且 长宽 ≥ 32px 且类名不在 shell 黑名单」，
+          再加两道闸门：链签名短路（只读最近 4 个窗口的 hwnd，约 0.7µs）与抢顶限流（两次至少隔 0.1s）。</p>
+      </div>
+      <div class="tech-row">
+        <h4>覆盖层不糊任务栏</h4>
+        <p>把每块屏的任务栏矩形从两层缓冲里擦掉，任务栏于是永远干净 ——
+          观感上等于任务栏浮在特效之前。任务栏放上/下/左/右都成立，自动隐藏时系统把它挪到屏幕外，矩形自然不相交。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 怎么用 -->
+  <section class="sec">
+    <div class="sec-head">
+      <span class="sec-num">05 / 怎么用</span>
+      <h2>四步，让你的桌面下起雨</h2>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="n">01</div>
+        <h4>下载</h4>
+        <p>Releases 里拿打包好的 exe，或 clone 源码自己跑。</p>
+      </div>
+      <div class="step">
+        <div class="n">02</div>
+        <h4>启动</h4>
+        <p>双击即用。首次运行自动建 venv 并从清华镜像装依赖，之后全程离线。</p>
+      </div>
+      <div class="step">
+        <div class="n">03</div>
+        <h4>选特效</h4>
+        <p>侧栏按五类分组，点「下雨」就能开。所有参数实时生效，改一下立刻能看到。</p>
+      </div>
+      <div class="step">
+        <div class="n">04</div>
+        <h4>存预设</h4>
+        <p>调好一套点「保存当前为预设」，随时一键切回。托盘常驻，不挡你干活。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <div class="cta">
+    <div>
+      <h2>给它一个下雨的桌面</h2>
+      <p>Windows 10 / 11，MIT 协议，随意用、随意改。</p>
+      <p class="hashtag" style="margin-top:10px">#WorkBuddy&nbsp;&nbsp;#1024程序员节</p>
+    </div>
+    <div class="hero-actions" style="margin:0">
+      <a class="btn primary" href="https://github.com/jxust-CGS/DesktopFX" target="_blank" rel="noopener">↓ 前往 GitHub</a>
+      <a class="btn" href="https://github.com/jxust-CGS/DesktopFX/releases" target="_blank" rel="noopener">下载最新版</a>
+    </div>
+  </div>
+
+  <footer>
+    <span>DesktopFX · 纯 Python Windows 桌面特效器</span>
+    <span>MIT License · <code>github.com/jxust-CGS/DesktopFX</code></span>
+  </footer>
+
+</div>
+
+<script>
+// 标题栏帧率读数：做一个轻量的呼吸式跳动，暗示"这东西在实时渲染"
+(function(){
+  var el = document.getElementById('fps');
+  if (!el) return;
+  var base = 59.4, t = 0;
+  setInterval(function(){
+    t += 0.4;
+    el.textContent = (base + Math.sin(t) * 0.5 + Math.random() * 0.25).toFixed(1);
+  }, 420);
+})();
+</script>
+</body>
+</html>

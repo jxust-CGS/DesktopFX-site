@@ -1,0 +1,11 @@
+# Pages 站点不需要这些
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+
+# Python（万一有人在本地跑校验脚本）
+__pycache__/
+*.pyc
