@@ -57,4 +57,9 @@ python desktop_fx.py
 - 画面里的光标会真的移动、真的按下 —— 聚光灯跟着光标亮、颜料被它搅动、
   小猫沿它划过的路线跟上来、爱心在它点下的位置炸开。
 
-MIT License
+## 许可证
+
+**GNU Affero General Public License v3.0（AGPL-3.0）** —— 全文见源码仓库的 [LICENSE](https://github.com/jxust-CGS/DesktopFX/blob/main/LICENSE)。
+
+可自由使用、修改、再分发；若把修改后的版本作为网络服务提供给他人使用，
+须同样以 AGPL-3.0 公开完整源码。
